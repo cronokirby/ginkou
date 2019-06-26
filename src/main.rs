@@ -3,8 +3,9 @@ use std::path::Path;
 use std::string::FromUtf8Error;
 #[macro_use]
 extern crate rusqlite;
-use rusqlite::Connection;
 
+use mecab::Tagger;
+use rusqlite::Connection;
 const DAKUTEN_BYTES: [u8; 3] = [227, 128, 130];
 
 #[derive(Debug)]
@@ -104,6 +105,37 @@ impl Bank {
     }
 }
 
+fn consume_trimmed(bank: &mut Bank, trimmed: &str) -> rusqlite::Result<()> {
+    let sentence_id = bank.add_sentence(trimmed)?;
+    let mut tagger = Tagger::new("");
+    tagger.parse_nbest_init(trimmed);
+    let mecab_out = tagger.next().unwrap();
+    for l in mecab_out.lines() {
+        if l == "EOS" {
+            break;
+        }
+        let tab_index = l.find('\t').unwrap();
+        let (_, rest) = l.split_at(tab_index);
+        // Remove the leading tab
+        let rest = &rest[1..];
+        let root = rest.split(',').skip(6).next().unwrap();
+        bank.add_word(root, sentence_id)?;
+    }
+    Ok(())
+}
+
+fn consume_sentences<R: io::BufRead>(bank: &mut Bank, reader: R) -> rusqlite::Result<()> {
+    for sentence in sentences(reader) {
+        if sentence.is_err() {
+            continue;
+        };
+        let sentence = sentence.unwrap();
+        let trimmed = sentence.trim_start();
+        consume_trimmed(bank, trimmed)?;
+    }
+    Ok(())
+}
+
 fn main() -> rusqlite::Result<()> {
     let mut bank = Bank::from_memory()?;
     let s1 = bank.add_sentence("Hello World")?;
@@ -120,7 +152,7 @@ fn main() -> rusqlite::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Bank, sentences};
+    use super::*;
 
     #[test]
     fn sentences_works_correctly() {
@@ -150,6 +182,22 @@ mod tests {
         assert_eq!(Ok(a_sentences), bank.matching_word("A"));
         let c_sentences = vec![sentence2.clone()];
         assert_eq!(Ok(c_sentences), bank.matching_word("C"));
+        Ok(())
+    }
+
+    #[test]
+    fn sentences_can_be_consumed() -> rusqlite::Result<()> {
+        let mut bank = Bank::from_memory()?;
+        let sentence1 = "猫を見た";
+        let sentence2 = "犬を見る";
+        consume_trimmed(&mut bank, sentence1)?;
+        consume_trimmed(&mut bank, sentence2)?;
+        let a_sentences = vec![sentence1.into(), sentence2.into()];
+        assert_eq!(Ok(a_sentences), bank.matching_word("見る"));
+        let b_sentences = vec![sentence2.into()];
+        assert_eq!(Ok(b_sentences), bank.matching_word("犬"));
+        let c_sentences = vec![sentence1.into()];
+        assert_eq!(Ok(c_sentences), bank.matching_word("猫"));
         Ok(())
     }
 }
