@@ -3,9 +3,14 @@ use std::path::Path;
 use std::string::FromUtf8Error;
 #[macro_use]
 extern crate rusqlite;
-
-use mecab::Tagger;
 use rusqlite::Connection;
+#[macro_use]
+extern crate structopt;
+use structopt::StructOpt;
+extern crate mecab;
+use mecab::Tagger;
+
+
 const DAKUTEN_BYTES: [u8; 3] = [227, 128, 130];
 
 #[derive(Debug)]
@@ -136,17 +141,35 @@ fn consume_sentences<R: io::BufRead>(bank: &mut Bank, reader: R) -> rusqlite::Re
     Ok(())
 }
 
+#[derive(Debug, StructOpt)]
+#[structopt(name = "ginkou", about = "Japanese sentence bank")]
+enum Ginkou {
+    /// Add new sentences to the database.
+    #[structopt(name = "add")]
+    Add {
+        /// The file to read sentences from.
+        ///
+        /// If no file is given, sentences will be read from stdin.
+        #[structopt(long, short = "f")]
+        file: Option<String>,
+        /// The database to use.
+        #[structopt(long = "database", short = "d", default_value = "~/.ginkoudb")]
+        db: String,
+    },
+    /// Search for all sentences containing a given word.
+    #[structopt(name = "get")]
+    Get {
+        /// The word to search for in the database.
+        word: String,
+        /// The database to use.
+        #[structopt(long = "database", short = "d", default_value = "~/.ginkoudb")]
+        db: String,
+    },
+}
+
 fn main() -> rusqlite::Result<()> {
-    let mut bank = Bank::from_memory()?;
-    let s1 = bank.add_sentence("Hello World")?;
-    bank.add_word("Hello", s1)?;
-    bank.add_word("World", s1)?;
-    let s2 = bank.add_sentence("Hello World again")?;
-    bank.add_word("Hello", s2)?;
-    bank.add_word("World", s2)?;
-    bank.add_word("again", s2)?;
-    println!("{:?}", bank.matching_word("Hello"));
-    println!("{:?}", bank.matching_word("again"));
+    let opt = Ginkou::from_args();
+    println!("{:?}", opt);
     Ok(())
 }
 

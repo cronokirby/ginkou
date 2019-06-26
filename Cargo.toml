@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 mecab = "0.1"
 rusqlite = "0.18"
+structopt = { version = "0.2.1", default-features = false }
