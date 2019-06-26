@@ -1,0 +1,9 @@
+[package]
+name = "ginkou"
+version = "0.1.0"
+authors = ["Lúcás Meier <cronokirby@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+mecab = "0.1"
+rusqlite = "0.18"
