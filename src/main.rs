@@ -131,7 +131,10 @@ fn consume_trimmed(bank: &mut Bank, trimmed: &str) -> rusqlite::Result<()> {
 }
 
 fn consume_sentences<R: io::BufRead>(bank: &mut Bank, reader: R) -> rusqlite::Result<()> {
+    let mut i = 0;
     for sentence in sentences(reader) {
+        println!("{}", i);
+        i += 1;
         if sentence.is_err() {
             continue;
         };
