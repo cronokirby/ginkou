@@ -1,0 +1,2 @@
+INSERT INTO WordSentence
+SELECT id, ?2 FROM WORDS WHERE word=?1;

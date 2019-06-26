@@ -1,4 +1,4 @@
-SELECT sentence FROM Sentences
-LEFT JOIN WordSentence on WordSentence.word_id = sentences.id
-LEFT JOIN Words on Words.id = WordSentence.word_id
-WHERE word=?1
+SELECT sentence FROM sentences
+LEFT JOIN wordsentence ON wordsentence.sentence_id = sentences.id 
+LEFT JOIN words ON words.id = wordsentence.word_id
+WHERE word=?1;

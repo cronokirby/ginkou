@@ -13,5 +13,5 @@ CREATE TABLE WordSentence(
     sentence_id INTEGER NOT NULL,
     PRIMARY KEY(word_id, sentence_id),
     FOREIGN KEY(word_id) REFERENCES Words(id),
-    FOREIGN KEY(sentence_id) REFERENCES sentences(id)
+    FOREIGN KEY(sentence_id) REFERENCES Sentences(id)
 );
