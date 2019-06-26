@@ -51,17 +51,28 @@ fn sentences<R: io::BufRead>(reader: R) -> Sentences<R> {
     Sentences { reader }
 }
 
+
+fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(include_str!("sql/setup.sql"))
+}
+
 struct Bank {
     conn: Connection,
 }
 
 impl Bank {
-    fn new() -> rusqlite::Result<Self> {
-        let existed = Path::new("db").exists();
-        let conn = Connection::open("db")?;
+    fn from_disk<P: AsRef<Path>>(path: P) -> rusqlite::Result<Self> {
+        let existed = path.as_ref().exists();
+        let conn = Connection::open(path)?;
         if !existed {
-            conn.execute_batch(include_str!("sql/setup.sql"))?;
+            create_tables(&conn)?;
         }
+        Ok(Bank { conn })
+    }
+
+    fn from_memory() -> rusqlite::Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        create_tables(&conn)?;
         Ok(Bank { conn })
     }
 
@@ -94,7 +105,7 @@ impl Bank {
 }
 
 fn main() -> rusqlite::Result<()> {
-    let mut bank = Bank::new()?;
+    let mut bank = Bank::from_memory()?;
     let s1 = bank.add_sentence("Hello World")?;
     bank.add_word("Hello", s1)?;
     bank.add_word("World", s1)?;
@@ -109,7 +120,7 @@ fn main() -> rusqlite::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::sentences;
+    use super::{Bank, sentences};
 
     #[test]
     fn sentences_works_correctly() {
@@ -121,5 +132,24 @@ mod tests {
         assert_eq!(String::from("B。"), b.unwrap().unwrap());
         let c = iter.next();
         assert_eq!(String::from("XXC。"), c.unwrap().unwrap());
+    }
+
+    #[test]
+    fn bank_lookup_works_correctly() -> rusqlite::Result<()> {
+        let mut bank = Bank::from_memory()?;
+        let sentence1 = String::from("A B");
+        let sentence2 = String::from("A B C");
+        let s1 = bank.add_sentence(&sentence1)?;
+        bank.add_word("A", s1)?;
+        bank.add_word("B", s1)?;
+        let s2 = bank.add_sentence(&sentence2)?;
+        bank.add_word("A", s2)?;
+        bank.add_word("B", s2)?;
+        bank.add_word("C", s2)?;
+        let a_sentences = vec![sentence1.clone(), sentence2.clone()];
+        assert_eq!(Ok(a_sentences), bank.matching_word("A"));
+        let c_sentences = vec![sentence2.clone()];
+        assert_eq!(Ok(c_sentences), bank.matching_word("C"));
+        Ok(())
     }
 }
