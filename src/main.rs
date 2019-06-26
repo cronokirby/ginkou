@@ -1,6 +1,6 @@
 use std::io;
+use std::path::Path;
 use std::string::FromUtf8Error;
-extern crate mecab;
 #[macro_use]
 extern crate rusqlite;
 use rusqlite::Connection;
@@ -51,15 +51,17 @@ fn sentences<R: io::BufRead>(reader: R) -> Sentences<R> {
     Sentences { reader }
 }
 
-
 struct Bank {
     conn: Connection,
 }
 
 impl Bank {
     fn new() -> rusqlite::Result<Self> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch(include_str!("sql/setup.sql"))?;
+        let existed = Path::new("db").exists();
+        let conn = Connection::open("db")?;
+        if !existed {
+            conn.execute_batch(include_str!("sql/setup.sql"))?;
+        }
         Ok(Bank { conn })
     }
 
