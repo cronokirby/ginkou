@@ -1,6 +1,6 @@
 CREATE TABLE Words(
     id INTEGER PRIMARY KEY,
-    words TEXT NOT NULL
+    words TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE Sentences(
