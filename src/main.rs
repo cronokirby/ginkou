@@ -1,10 +1,11 @@
+use std::fs::File;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
+extern crate dirs;
 #[macro_use]
 extern crate rusqlite;
 use rusqlite::Connection;
-#[macro_use]
 extern crate structopt;
 use structopt::StructOpt;
 extern crate mecab;
@@ -150,11 +151,11 @@ enum Ginkou {
         /// The file to read sentences from.
         ///
         /// If no file is given, sentences will be read from stdin.
-        #[structopt(long, short = "f")]
-        file: Option<String>,
+        #[structopt(long, short = "f", parse(from_os_str))]
+        file: Option<PathBuf>,
         /// The database to use.
-        #[structopt(long = "database", short = "d", default_value = "~/.ginkoudb")]
-        db: String,
+        #[structopt(long = "database", short = "d", parse(from_os_str))]
+        db: Option<PathBuf>,
     },
     /// Search for all sentences containing a given word.
     #[structopt(name = "get")]
@@ -162,14 +163,50 @@ enum Ginkou {
         /// The word to search for in the database.
         word: String,
         /// The database to use.
-        #[structopt(long = "database", short = "d", default_value = "~/.ginkoudb")]
-        db: String,
+        #[structopt(long = "database", short = "d", parse(from_os_str))]
+        db: Option<PathBuf>,
     },
+}
+
+fn default_db_path() -> PathBuf {
+    if let Some(mut pb) = dirs::home_dir() {
+        pb.push(".ginkoudb");
+        pb
+    } else {
+        PathBuf::from(".ginkoudb")
+    }
 }
 
 fn main() -> rusqlite::Result<()> {
     let opt = Ginkou::from_args();
-    println!("{:?}", opt);
+    match opt {
+        Ginkou::Get { word, db } => {
+            let db_path = db.unwrap_or(default_db_path());
+            let mut bank = Bank::from_disk(&db_path)?;
+            let results = bank.matching_word(&word)?;
+            for r in results {
+                println!("{}", r);
+            }
+        }
+        Ginkou::Add { file, db } => {
+            let db_path = db.unwrap_or(default_db_path());
+            let mut bank = Bank::from_disk(&db_path)?;
+            match file {
+                None => {
+                    consume_sentences(&mut bank, io::BufReader::new(io::stdin()))?;
+                }
+                Some(path) => {
+                    let file_res = File::open(&path);
+                    if let Err(e) = file_res {
+                        println!("Couldn't open {}:\n {}", path.as_path().display(), e);
+                        return Ok(());
+                    }
+                    let file = file_res.unwrap();
+                    consume_sentences(&mut bank, io::BufReader::new(file))?;
+                }
+            };
+        }
+    };
     Ok(())
 }
 
