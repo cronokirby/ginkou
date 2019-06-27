@@ -5,7 +5,7 @@ use std::string::FromUtf8Error;
 extern crate dirs;
 #[macro_use]
 extern crate rusqlite;
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 extern crate structopt;
 use structopt::StructOpt;
 extern crate mecab;
@@ -80,55 +80,49 @@ fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(include_str!("sql/setup.sql"))
 }
 
-struct Bank {
-    conn: Connection,
-}
-
-impl Bank {
-    fn from_disk<P: AsRef<Path>>(path: P) -> rusqlite::Result<Self> {
-        let existed = path.as_ref().exists();
-        let conn = Connection::open(path)?;
-        if !existed {
-            create_tables(&conn)?;
-        }
-        Ok(Bank { conn })
-    }
-
-    fn from_memory() -> rusqlite::Result<Self> {
-        let conn = Connection::open_in_memory()?;
+fn conn_from_disk<P: AsRef<Path>>(path: P) -> rusqlite::Result<Connection> {
+    let existed = path.as_ref().exists();
+    let conn = Connection::open(path)?;
+    if !existed {
         create_tables(&conn)?;
-        Ok(Bank { conn })
     }
-
-    fn add_sentence(&mut self, sentence: &str) -> rusqlite::Result<u32> {
-        let add_sentence = include_str!("sql/add_sentence.sql");
-        self.conn.execute(add_sentence, params![sentence])?;
-        Ok(self.conn.last_insert_rowid() as u32)
-    }
-
-    fn add_word(&mut self, word: &str, sentence_id: u32) -> rusqlite::Result<()> {
-        let add_word = include_str!("sql/add_word.sql");
-        self.conn.execute(add_word, params![word])?;
-        let junction = include_str!("sql/add_word_junction.sql");
-        self.conn.execute(junction, params![word, sentence_id])?;
-        Ok(())
-    }
-
-    fn matching_word(&mut self, word: &str) -> rusqlite::Result<Vec<String>> {
-        let matching = include_str!("sql/word_sentences.sql");
-        let mut stmt = self.conn.prepare_cached(matching)?;
-        let mut buffer = Vec::new();
-        let results = stmt.query_map(params![word], |row| row.get(0))?;
-        for r in results {
-            let s: String = r?;
-            buffer.push(s);
-        }
-        Ok(buffer)
-    }
+    Ok(conn)
 }
 
-fn consume_trimmed(bank: &mut Bank, trimmed: &str) -> rusqlite::Result<()> {
-    let sentence_id = bank.add_sentence(trimmed)?;
+fn conn_from_memory() -> rusqlite::Result<Connection> {
+    let conn = Connection::open_in_memory()?;
+    create_tables(&conn)?;
+    Ok(conn)
+}
+
+fn add_sentence(conn: &Connection, sentence: &str) -> rusqlite::Result<u32> {
+    let add_sentence = include_str!("sql/add_sentence.sql");
+    conn.execute(add_sentence, params![sentence])?;
+    Ok(conn.last_insert_rowid() as u32)
+}
+
+fn add_word(conn: &Connection, word: &str, sentence_id: u32) -> rusqlite::Result<()> {
+    let add_word = include_str!("sql/add_word.sql");
+    conn.execute(add_word, params![word])?;
+    let junction = include_str!("sql/add_word_junction.sql");
+    conn.execute(junction, params![word, sentence_id])?;
+    Ok(())
+}
+
+fn matching_word(conn: &Connection, word: &str) -> rusqlite::Result<Vec<String>> {
+    let matching = include_str!("sql/word_sentences.sql");
+    let mut stmt = conn.prepare_cached(matching)?;
+    let mut buffer = Vec::new();
+    let results = stmt.query_map(params![word], |row| row.get(0))?;
+    for r in results {
+        let s: String = r?;
+        buffer.push(s);
+    }
+    Ok(buffer)
+}
+
+fn consume_trimmed(conn: &Connection, trimmed: &str) -> rusqlite::Result<()> {
+    let sentence_id = add_sentence(conn, trimmed)?;
     let mut tagger = Tagger::new("");
     tagger.parse_nbest_init(trimmed);
     let mecab_out = tagger.next().unwrap();
@@ -141,12 +135,12 @@ fn consume_trimmed(bank: &mut Bank, trimmed: &str) -> rusqlite::Result<()> {
         // Remove the leading tab
         let rest = &rest[1..];
         let root = rest.split(',').skip(6).next().unwrap();
-        bank.add_word(root, sentence_id)?;
+        add_word(conn, root, sentence_id)?;
     }
     Ok(())
 }
 
-fn consume_sentences<R: io::BufRead>(bank: &mut Bank, reader: R) -> rusqlite::Result<()> {
+fn consume_sentences<R: io::BufRead>(conn: &Connection, reader: R) -> rusqlite::Result<()> {
     let mut i = 0;
     for sentence in sentences(reader) {
         i += 1;
@@ -156,7 +150,7 @@ fn consume_sentences<R: io::BufRead>(bank: &mut Bank, reader: R) -> rusqlite::Re
         };
         let sentence = sentence.unwrap();
         println!("#{}: {}", i, sentence);
-        consume_trimmed(bank, &sentence)?;
+        consume_trimmed(conn, &sentence)?;
     }
     Ok(())
 }
@@ -201,18 +195,19 @@ fn main() -> rusqlite::Result<()> {
     match opt {
         Ginkou::Get { word, db } => {
             let db_path = db.unwrap_or(default_db_path());
-            let mut bank = Bank::from_disk(&db_path)?;
-            let results = bank.matching_word(&word)?;
+            let mut conn = conn_from_disk(&db_path)?;
+            let results = matching_word(&mut conn, &word)?;
             for r in results {
                 println!("{}", r);
             }
         }
         Ginkou::Add { file, db } => {
             let db_path = db.unwrap_or(default_db_path());
-            let mut bank = Bank::from_disk(&db_path)?;
+            let mut conn = conn_from_disk(&db_path)?;
+            let tx = conn.transaction()?;
             match file {
                 None => {
-                    consume_sentences(&mut bank, io::BufReader::new(io::stdin()))?;
+                    consume_sentences(&tx, io::BufReader::new(io::stdin()))?;
                 }
                 Some(path) => {
                     let file_res = File::open(&path);
@@ -221,9 +216,10 @@ fn main() -> rusqlite::Result<()> {
                         return Ok(());
                     }
                     let file = file_res.unwrap();
-                    consume_sentences(&mut bank, io::BufReader::new(file))?;
+                    consume_sentences(&tx, io::BufReader::new(file))?;
                 }
             };
+            tx.commit()?;
         }
     };
     Ok(())
@@ -247,36 +243,36 @@ mod tests {
 
     #[test]
     fn bank_lookup_works_correctly() -> rusqlite::Result<()> {
-        let mut bank = Bank::from_memory()?;
+        let conn = conn_from_memory()?;
         let sentence1 = String::from("A B");
         let sentence2 = String::from("A B C");
-        let s1 = bank.add_sentence(&sentence1)?;
-        bank.add_word("A", s1)?;
-        bank.add_word("B", s1)?;
-        let s2 = bank.add_sentence(&sentence2)?;
-        bank.add_word("A", s2)?;
-        bank.add_word("B", s2)?;
-        bank.add_word("C", s2)?;
+        let s1 = add_sentence(&conn, &sentence1)?;
+        add_word(&conn, "A", s1)?;
+        add_word(&conn, "B", s1)?;
+        let s2 = add_sentence(&conn, &sentence2)?;
+        add_word(&conn, "A", s2)?;
+        add_word(&conn, "B", s2)?;
+        add_word(&conn, "C", s2)?;
         let a_sentences = vec![sentence1.clone(), sentence2.clone()];
-        assert_eq!(Ok(a_sentences), bank.matching_word("A"));
+        assert_eq!(Ok(a_sentences), matching_word(&conn, "A"));
         let c_sentences = vec![sentence2.clone()];
-        assert_eq!(Ok(c_sentences), bank.matching_word("C"));
+        assert_eq!(Ok(c_sentences), matching_word(&conn, "C"));
         Ok(())
     }
 
     #[test]
     fn sentences_can_be_consumed() -> rusqlite::Result<()> {
-        let mut bank = Bank::from_memory()?;
+        let conn = conn_from_memory()?;
         let sentence1 = "猫を見た";
         let sentence2 = "犬を見る";
-        consume_trimmed(&mut bank, sentence1)?;
-        consume_trimmed(&mut bank, sentence2)?;
+        consume_trimmed(&conn, sentence1)?;
+        consume_trimmed(&conn, sentence2)?;
         let a_sentences = vec![sentence1.into(), sentence2.into()];
-        assert_eq!(Ok(a_sentences), bank.matching_word("見る"));
+        assert_eq!(Ok(a_sentences), matching_word(&conn, "見る"));
         let b_sentences = vec![sentence2.into()];
-        assert_eq!(Ok(b_sentences), bank.matching_word("犬"));
+        assert_eq!(Ok(b_sentences), matching_word(&conn, "犬"));
         let c_sentences = vec![sentence1.into()];
-        assert_eq!(Ok(c_sentences), bank.matching_word("猫"));
+        assert_eq!(Ok(c_sentences), matching_word(&conn, "猫"));
         Ok(())
     }
 }
