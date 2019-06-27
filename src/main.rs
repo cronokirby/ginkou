@@ -103,8 +103,7 @@ impl Bank {
     fn add_sentence(&mut self, sentence: &str) -> rusqlite::Result<u32> {
         let add_sentence = include_str!("sql/add_sentence.sql");
         self.conn.execute(add_sentence, params![sentence])?;
-        let mut stmt = self.conn.prepare("SELECT last_insert_rowid()")?;
-        stmt.query_row(params![], |row| row.get(0))
+        Ok(self.conn.last_insert_rowid() as u32)
     }
 
     fn add_word(&mut self, word: &str, sentence_id: u32) -> rusqlite::Result<()> {
@@ -117,7 +116,7 @@ impl Bank {
 
     fn matching_word(&mut self, word: &str) -> rusqlite::Result<Vec<String>> {
         let matching = include_str!("sql/word_sentences.sql");
-        let mut stmt = self.conn.prepare(matching)?;
+        let mut stmt = self.conn.prepare_cached(matching)?;
         let mut buffer = Vec::new();
         let results = stmt.query_map(params![word], |row| row.get(0))?;
         for r in results {
