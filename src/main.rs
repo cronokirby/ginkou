@@ -110,7 +110,7 @@ fn add_word(conn: &Connection, word: &str, sentence_id: u32) -> rusqlite::Result
 }
 
 fn matching_word(conn: &Connection, word: &str) -> rusqlite::Result<Vec<String>> {
-    let matching = include_str!("sql/word_sentences.sql");
+    let matching = include_str!("sql/all_word_sentences.sql");
     let mut stmt = conn.prepare_cached(matching)?;
     let mut buffer = Vec::new();
     let results = stmt.query_map(params![word], |row| row.get(0))?;
@@ -119,6 +119,21 @@ fn matching_word(conn: &Connection, word: &str) -> rusqlite::Result<Vec<String>>
         buffer.push(s);
     }
     Ok(buffer)
+}
+
+fn print_matching_words(conn: &Connection, word: &str, all: bool) -> rusqlite::Result<()> {
+    let query = if all {
+        include_str!("sql/all_word_sentences.sql")
+    } else {
+        include_str!("sql/best_word_sentences.sql")
+    };
+    let mut stmt = conn.prepare_cached(query)?;
+    let results = stmt.query_map(params![word], |row| row.get(0))?;
+    for r in results {
+        let r: String = r?;
+        println!("{}", r);
+    }
+    Ok(())
 }
 
 fn consume_trimmed(conn: &Connection, trimmed: &str) -> rusqlite::Result<()> {
@@ -175,6 +190,9 @@ enum Ginkou {
     Get {
         /// The word to search for in the database.
         word: String,
+        /// Show all results instead of shortest 200
+        #[structopt(long = "allwords", short = "a")]
+        all: bool,
         /// The database to use.
         #[structopt(long = "database", short = "d", parse(from_os_str))]
         db: Option<PathBuf>,
@@ -193,13 +211,10 @@ fn default_db_path() -> PathBuf {
 fn main() -> rusqlite::Result<()> {
     let opt = Ginkou::from_args();
     match opt {
-        Ginkou::Get { word, db } => {
+        Ginkou::Get { word, all, db } => {
             let db_path = db.unwrap_or(default_db_path());
             let mut conn = conn_from_disk(&db_path)?;
-            let results = matching_word(&mut conn, &word)?;
-            for r in results {
-                println!("{}", r);
-            }
+            print_matching_words(&mut conn, &word, all)?;
         }
         Ginkou::Add { file, db } => {
             let db_path = db.unwrap_or(default_db_path());
