@@ -33,29 +33,46 @@ impl From<io::Error> for SentenceError {
 }
 
 struct Sentences<R> {
-    reader: R,
+    bytes: io::Bytes<R>,
+    done: bool,
 }
 
 impl<B: io::BufRead> Iterator for Sentences<B> {
     type Item = Result<String, SentenceError>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
         let mut buf = Vec::new();
-        for byte in &DAKUTEN_BYTES {
-            let read = self.reader.read_until(*byte, &mut buf);
-            if let Err(e) = read {
-                return Some(Err(e.into()));
-            }
-            if read.unwrap() == 0 {
-                return None;
+        let mut match_index = 0;
+        while match_index < 3 {
+            let byte = match self.bytes.next() {
+                None => break,
+                Some(Err(e)) => return Some(Err(e.into())),
+                Some(Ok(b)) => b,
+            };
+            buf.push(byte);
+            if byte == DAKUTEN_BYTES[match_index] {
+                match_index += 1;
+            } else {
+                match_index = 0;
             }
         }
-        Some(String::from_utf8(buf).map_err(SentenceError::from))
+        if buf.len() == 0 {
+            self.done = true;
+            return None;
+        }
+        let next = String::from_utf8(buf).map_err(SentenceError::from);
+        Some(next.map(|x| x.replace(|x: char| x.is_whitespace(), "")))
     }
 }
 
 fn sentences<R: io::BufRead>(reader: R) -> Sentences<R> {
-    Sentences { reader }
+    Sentences {
+        bytes: reader.bytes(),
+        done: false,
+    }
 }
 
 
@@ -133,14 +150,14 @@ fn consume_trimmed(bank: &mut Bank, trimmed: &str) -> rusqlite::Result<()> {
 fn consume_sentences<R: io::BufRead>(bank: &mut Bank, reader: R) -> rusqlite::Result<()> {
     let mut i = 0;
     for sentence in sentences(reader) {
-        println!("{}", i);
         i += 1;
         if sentence.is_err() {
+            println!("Err on #{}: {:?}", i, sentence);
             continue;
         };
         let sentence = sentence.unwrap();
-        let trimmed = sentence.trim_start();
-        consume_trimmed(bank, trimmed)?;
+        println!("#{}: {}", i, sentence);
+        consume_trimmed(bank, &sentence)?;
     }
     Ok(())
 }
@@ -219,7 +236,7 @@ mod tests {
 
     #[test]
     fn sentences_works_correctly() {
-        let string = "A。B。XXC。";
+        let string = "A。\n  B。\n\n XXC。";
         let mut iter = sentences(std::io::BufReader::new(string.as_bytes()));
         let a = iter.next();
         assert_eq!(String::from("A。"), a.unwrap().unwrap());
