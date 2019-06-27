@@ -63,11 +63,12 @@ ginkou add -f file
 
 ```
 USAGE:
-    ginkou get [OPTIONS] <word>
+    ginkou get [FLAGS] [OPTIONS] <word>
 
 FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+    -a, --allwords    Show all results instead of shortest 200
+    -h, --help        Prints help information
+    -V, --version     Prints version information
 
 OPTIONS:
     -d, --database <db>    The database to use.
