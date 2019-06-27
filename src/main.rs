@@ -1,11 +1,12 @@
 use std::fs::File;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 extern crate dirs;
 #[macro_use]
 extern crate rusqlite;
-use rusqlite::{Connection, Transaction};
+use rusqlite::Connection;
 extern crate structopt;
 use structopt::StructOpt;
 extern crate mecab;
@@ -121,6 +122,7 @@ fn matching_word(conn: &Connection, word: &str) -> rusqlite::Result<Vec<String>>
     Ok(buffer)
 }
 
+// This will ignore broken pipes, to support unix piping into things like head
 fn print_matching_words(conn: &Connection, word: &str, all: bool) -> rusqlite::Result<()> {
     let query = if all {
         include_str!("sql/all_word_sentences.sql")
@@ -131,7 +133,11 @@ fn print_matching_words(conn: &Connection, word: &str, all: bool) -> rusqlite::R
     let results = stmt.query_map(params![word], |row| row.get(0))?;
     for r in results {
         let r: String = r?;
-        println!("{}", r);
+        if let Err(e) = write!(io::stdout(), "{}\n", r) {
+            if e.kind() != io::ErrorKind::BrokenPipe {
+                panic!(e);
+            }
+        }
     }
     Ok(())
 }
