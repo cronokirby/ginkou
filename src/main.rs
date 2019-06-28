@@ -14,6 +14,12 @@ use mecab::Tagger;
 
 
 const DAKUTEN_BYTES: [u8; 3] = [227, 128, 130];
+const SQL_ADD_SENTENCE: &'static str = include_str!("sql/add_sentence.sql");
+const SQL_ADD_WORD_JUNCTION: &'static str = include_str!("sql/add_word_junction.sql");
+const SQL_ADD_WORD: &'static str = include_str!("sql/add_word.sql");
+const SQL_ALL_WORD_SENTENCES: &'static str = include_str!("sql/all_word_sentences.sql");
+const SQL_BEST_WORD_SENTENCES: &'static str = include_str!("sql/best_word_sentences.sql");
+const SQL_SETUP: &'static str = include_str!("sql/setup.sql");
 
 #[derive(Debug)]
 enum SentenceError {
@@ -78,7 +84,7 @@ fn sentences<R: io::BufRead>(reader: R) -> Sentences<R> {
 
 
 fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(include_str!("sql/setup.sql"))
+    conn.execute_batch(SQL_SETUP)
 }
 
 fn conn_from_disk<P: AsRef<Path>>(path: P) -> rusqlite::Result<Connection> {
@@ -97,22 +103,18 @@ fn conn_from_memory() -> rusqlite::Result<Connection> {
 }
 
 fn add_sentence(conn: &Connection, sentence: &str) -> rusqlite::Result<u32> {
-    let add_sentence = include_str!("sql/add_sentence.sql");
-    conn.execute(add_sentence, params![sentence])?;
+    conn.execute(SQL_ADD_SENTENCE, params![sentence])?;
     Ok(conn.last_insert_rowid() as u32)
 }
 
 fn add_word(conn: &Connection, word: &str, sentence_id: u32) -> rusqlite::Result<()> {
-    let add_word = include_str!("sql/add_word.sql");
-    conn.execute(add_word, params![word])?;
-    let junction = include_str!("sql/add_word_junction.sql");
-    conn.execute(junction, params![word, sentence_id])?;
+    conn.execute(SQL_ADD_WORD, params![word])?;
+    conn.execute(SQL_ADD_WORD_JUNCTION, params![word, sentence_id])?;
     Ok(())
 }
 
 fn matching_word(conn: &Connection, word: &str) -> rusqlite::Result<Vec<String>> {
-    let matching = include_str!("sql/all_word_sentences.sql");
-    let mut stmt = conn.prepare_cached(matching)?;
+    let mut stmt = conn.prepare_cached(SQL_ALL_WORD_SENTENCES)?;
     let mut buffer = Vec::new();
     let results = stmt.query_map(params![word], |row| row.get(0))?;
     for r in results {
@@ -125,9 +127,9 @@ fn matching_word(conn: &Connection, word: &str) -> rusqlite::Result<Vec<String>>
 // This will ignore broken pipes, to support unix piping into things like head
 fn print_matching_words(conn: &Connection, word: &str, all: bool) -> rusqlite::Result<()> {
     let query = if all {
-        include_str!("sql/all_word_sentences.sql")
+        SQL_ALL_WORD_SENTENCES
     } else {
-        include_str!("sql/best_word_sentences.sql")
+        SQL_BEST_WORD_SENTENCES
     };
     let mut stmt = conn.prepare_cached(query)?;
     let results = stmt.query_map(params![word], |row| row.get(0))?;
